@@ -66,16 +66,28 @@ export default async function handler(req, res) {
     });
 
     const contentType = response.headers.get('content-type') || 'text/html';
+
+    // For binary content (images, videos, etc), just proxy it directly
+    if (!contentType.includes('text') && !contentType.includes('json') && 
+        !contentType.includes('javascript') && !contentType.includes('xml')) {
+      const buffer = await response.buffer();
+      res.setHeader('Content-Type', contentType);
+      res.setHeader('Cache-Control', 'public, max-age=31536000');
+      return res.status(response.status).send(buffer);
+    }
+
     let body = await response.text();
 
-    // Aggressive HTML rewriting for maximum compatibility
+    // Get the proxy base URL
+    const proxyBase = '/api/proxy?url=';
+
+    // Aggressive content rewriting based on type
     if (contentType.includes('text/html') || contentType.includes('application/xhtml')) {
-      body = aggressiveRewriteHtml(body, targetUrl);
+      body = rewriteHtml(body, targetUrl, proxyBase);
     } else if (contentType.includes('javascript') || contentType.includes('json')) {
-      // Rewrite JavaScript files too
-      body = rewriteJavaScript(body, targetUrl);
+      body = rewriteJavaScript(body, targetUrl, proxyBase);
     } else if (contentType.includes('css')) {
-      body = rewriteCSS(body, targetUrl);
+      body = rewriteCSS(body, targetUrl, proxyBase);
     }
 
     // Remove ALL restrictive headers
@@ -93,7 +105,6 @@ export default async function handler(req, res) {
   } catch (error) {
     console.error('Proxy error:', error);
     
-    // Even on error, try to return something useful
     const errorHtml = `
       <!DOCTYPE html>
       <html>
@@ -165,21 +176,42 @@ export default async function handler(req, res) {
   }
 }
 
-function aggressiveRewriteHtml(html, targetUrl) {
+function rewriteHtml(html, targetUrl, proxyBase) {
   const baseUrl = targetUrl.origin;
   const fullUrl = targetUrl.href;
   let modified = html;
 
-  // Step 1: Inject base and aggressive anti-framing protection
+  // Function to proxy a URL
+  const proxyUrl = (url) => {
+    try {
+      if (url.startsWith('data:') || url.startsWith('blob:') || url.startsWith('javascript:')) {
+        return url;
+      }
+      if (url.startsWith('//')) {
+        url = targetUrl.protocol + url;
+      }
+      if (!url.startsWith('http')) {
+        url = new URL(url, fullUrl).href;
+      }
+      return proxyBase + encodeURIComponent(url);
+    } catch {
+      return url;
+    }
+  };
+
+  // Inject aggressive anti-framing and URL rewriting
   const aggressiveHead = `
     <base href="${fullUrl}">
     <meta http-equiv="Content-Security-Policy" content="default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; frame-ancestors *;">
     <script>
-      // ULTRA AGGRESSIVE frame-busting prevention
+      // Proxy configuration
+      window.__PROXY_BASE__ = '${proxyBase}';
+      window.__ORIGINAL_URL__ = '${fullUrl}';
+      
+      // Ultra aggressive frame-busting prevention
       (function() {
         'use strict';
         
-        // Freeze window properties
         try {
           Object.defineProperty(window, 'top', {
             configurable: false,
@@ -193,151 +225,189 @@ function aggressiveRewriteHtml(html, targetUrl) {
             configurable: false,
             get: function() { return null; }
           });
-          
-          // Override document properties
-          Object.defineProperty(document, 'referrer', {
-            get: function() { return '${fullUrl}'; }
-          });
-          
-          // Intercept location changes
-          var originalLocation = window.location;
-          delete window.location;
-          window.location = new Proxy(originalLocation, {
-            set: function(target, property, value) {
-              if (property === 'href' && value !== originalLocation.href) {
-                console.log('Blocked location change to:', value);
-                return true;
-              }
-              return Reflect.set(target, property, value);
-            }
-          });
-          
-        } catch(e) { console.log('Frame protection error:', e); }
+        } catch(e) {}
 
-        // Block common frame-busting patterns
-        window.addEventListener('beforeunload', function(e) {
-          e.stopImmediatePropagation();
-          return undefined;
-        }, true);
-
-        // Override alert/confirm/prompt that might be used for frame busting
-        var methods = ['alert', 'confirm', 'prompt'];
-        methods.forEach(function(method) {
-          var original = window[method];
-          window[method] = function() {
-            console.log('Blocked ' + method + ':', arguments);
-            return method === 'confirm' ? true : '';
-          };
-        });
-
-        // Prevent page from detecting iframe
-        if (window.self !== window.top) {
-          try {
-            Object.defineProperty(window.self, 'frameElement', {
-              get: function() { return null; }
-            });
-          } catch(e) {}
-        }
-
-        // Intercept and block navigation attempts
-        var origOpen = window.open;
-        window.open = function(url, target) {
-          if (target === '_top' || target === '_parent') {
-            target = '_self';
+        // Override fetch to proxy requests
+        const originalFetch = window.fetch;
+        window.fetch = function(url, options) {
+          if (typeof url === 'string' && (url.startsWith('http://') || url.startsWith('https://'))) {
+            url = window.__PROXY_BASE__ + encodeURIComponent(url);
           }
-          return origOpen.call(this, url, target);
+          return originalFetch.call(this, url, options);
         };
 
-        // Block meta refresh redirects
-        var metaRefresh = document.querySelectorAll('meta[http-equiv="refresh"]');
-        metaRefresh.forEach(function(meta) { meta.remove(); });
+        // Override XMLHttpRequest
+        const originalOpen = XMLHttpRequest.prototype.open;
+        XMLHttpRequest.prototype.open = function(method, url, ...args) {
+          if (typeof url === 'string' && (url.startsWith('http://') || url.startsWith('https://'))) {
+            url = window.__PROXY_BASE__ + encodeURIComponent(url);
+          }
+          return originalOpen.call(this, method, url, ...args);
+        };
 
-        console.log('🛡️ Frame protection active');
+        // Block navigation attempts
+        window.addEventListener('beforeunload', function(e) {
+          e.stopImmediatePropagation();
+        }, true);
+
+        console.log('🛡️ Proxy frame protection active');
+      })();
+    </script>
+    <script>
+      // Intercept ALL navigation
+      (function() {
+        const proxyNavigate = (url) => {
+          if (!url) return;
+          if (url.startsWith('#') || url.startsWith('javascript:') || url.startsWith('mailto:') || url.startsWith('tel:')) return;
+          
+          try {
+            if (!url.startsWith('http://') && !url.startsWith('https://')) {
+              url = new URL(url, window.__ORIGINAL_URL__).href;
+            }
+            
+            window.parent.postMessage({
+              type: 'navigate',
+              url: url
+            }, '*');
+          } catch(e) {
+            console.error('Navigation error:', e);
+          }
+        };
+
+        // Intercept History API
+        const originalPushState = history.pushState;
+        const originalReplaceState = history.replaceState;
+        
+        history.pushState = function(state, title, url) {
+          if (url) proxyNavigate(url);
+          return originalPushState.apply(this, arguments);
+        };
+        
+        history.replaceState = function(state, title, url) {
+          if (url) proxyNavigate(url);
+          return originalReplaceState.apply(this, arguments);
+        };
+
+        // Intercept all clicks
+        document.addEventListener('click', function(e) {
+          const link = e.target.closest('a');
+          if (link && link.href) {
+            e.preventDefault();
+            e.stopPropagation();
+            e.stopImmediatePropagation();
+            proxyNavigate(link.href);
+            return false;
+          }
+        }, true);
+
+        // Intercept form submissions
+        document.addEventListener('submit', function(e) {
+          const form = e.target;
+          if (form && form.action) {
+            e.preventDefault();
+            e.stopPropagation();
+            e.stopImmediatePropagation();
+            
+            const formData = new FormData(form);
+            const params = new URLSearchParams(formData).toString();
+            let url = form.action;
+            
+            if (form.method.toUpperCase() === 'GET' && params) {
+              url += (url.includes('?') ? '&' : '?') + params;
+            }
+            
+            proxyNavigate(url);
+            return false;
+          }
+        }, true);
+
+        console.log('🔗 Navigation interception active');
       })();
     </script>
   `;
 
   modified = modified.replace(/<head[^>]*>/i, '<head>' + aggressiveHead);
 
-  // Step 2: Remove ALL frame-busting scripts
-  const frameBustPatterns = [
-    /<script[^>]*>[\s\S]*?(top\.location|parent\.location|window\.top|top\s*!==?\s*self|top\s*!=\s*self|frameElement|frames\.length)[\s\S]*?<\/script>/gi,
-    /if\s*\(\s*top\s*[!=]==?\s*self\s*\)[^;{]*[;{]/gi,
-    /if\s*\(\s*window\s*[!=]==?\s*top\s*\)[^;{]*[;{]/gi,
-    /if\s*\(\s*parent\s*[!=]==?\s*self\s*\)[^;{]*[;{]/gi,
-    /top\.location\s*=\s*[^;]+;/gi,
-    /parent\.location\s*=\s*[^;]+;/gi,
-    /window\.top\.location\s*=\s*[^;]+;/gi,
-  ];
-
-  frameBustPatterns.forEach(pattern => {
-    modified = modified.replace(pattern, '/* removed frame-busting code */');
-  });
-
-  // Step 3: Rewrite ALL URLs to absolute
-  modified = modified.replace(/src\s*=\s*["'](?!http|\/\/|data:|blob:|javascript:)([^"']+)["']/gi, (match, url) => {
-    try {
-      const absoluteUrl = new URL(url, fullUrl).href;
-      return `src="${absoluteUrl}"`;
-    } catch {
-      return match;
-    }
-  });
-
-  modified = modified.replace(/href\s*=\s*["'](?!http|\/\/|#|javascript:|mailto:|tel:)([^"']+)["']/gi, (match, url) => {
-    try {
-      const absoluteUrl = new URL(url, fullUrl).href;
-      return `href="${absoluteUrl}"`;
-    } catch {
-      return match;
-    }
-  });
-
-  // Rewrite url() in style attributes
-  modified = modified.replace(/url\(["']?(?!http|\/\/|data:)([^"')]+)["']?\)/gi, (match, url) => {
-    try {
-      const absoluteUrl = new URL(url, fullUrl).href;
-      return `url("${absoluteUrl}")`;
-    } catch {
-      return match;
-    }
-  });
-
-  // Step 4: Remove CSP meta tags
-  modified = modified.replace(/<meta[^>]*http-equiv=["']?Content-Security-Policy["']?[^>]*>/gi, '');
+  // Rewrite ALL URLs in HTML to go through proxy
+  // Script sources
+  modified = modified.replace(/(<script[^>]*\ssrc=["'])(?!http:\/\/|https:\/\/|\/\/|data:|blob:)([^"']+)(["'])/gi, 
+    (match, before, url, after) => before + proxyUrl(url) + after);
   
-  // Step 5: Remove X-Frame-Options meta
-  modified = modified.replace(/<meta[^>]*http-equiv=["']?X-Frame-Options["']?[^>]*>/gi, '');
+  modified = modified.replace(/(<script[^>]*\ssrc=["'])((?:https?:)?\/\/[^"']+)(["'])/gi,
+    (match, before, url, after) => before + proxyUrl(url) + after);
+
+  // Link/CSS sources
+  modified = modified.replace(/(<link[^>]*\shref=["'])(?!http:\/\/|https:\/\/|\/\/|#|data:)([^"']+)(["'])/gi,
+    (match, before, url, after) => before + proxyUrl(url) + after);
+  
+  modified = modified.replace(/(<link[^>]*\shref=["'])((?:https?:)?\/\/[^"']+)(["'])/gi,
+    (match, before, url, after) => before + proxyUrl(url) + after);
+
+  // Image sources
+  modified = modified.replace(/(<img[^>]*\ssrc=["'])(?!http:\/\/|https:\/\/|\/\/|data:|blob:)([^"']+)(["'])/gi,
+    (match, before, url, after) => before + proxyUrl(url) + after);
+  
+  modified = modified.replace(/(<img[^>]*\ssrc=["'])((?:https?:)?\/\/[^"']+)(["'])/gi,
+    (match, before, url, after) => before + proxyUrl(url) + after);
+
+  // Iframe sources
+  modified = modified.replace(/(<iframe[^>]*\ssrc=["'])(?!http:\/\/|https:\/\/|\/\/|about:|data:)([^"']+)(["'])/gi,
+    (match, before, url, after) => before + proxyUrl(url) + after);
+  
+  modified = modified.replace(/(<iframe[^>]*\ssrc=["'])((?:https?:)?\/\/[^"']+)(["'])/gi,
+    (match, before, url, after) => before + proxyUrl(url) + after);
+
+  // All other src attributes
+  modified = modified.replace(/(\ssrc=["'])(?!http:\/\/|https:\/\/|\/\/|data:|blob:|javascript:)([^"']+)(["'])/gi,
+    (match, before, url, after) => before + proxyUrl(url) + after);
+  
+  modified = modified.replace(/(\ssrc=["'])((?:https?:)?\/\/[^"']+)(["'])/gi,
+    (match, before, url, after) => before + proxyUrl(url) + after);
+
+  // Background images in style attributes
+  modified = modified.replace(/url\(["']?(?!http:\/\/|https:\/\/|\/\/|data:)([^"')]+)["']?\)/gi,
+    (match, url) => `url("${proxyUrl(url)}")`);
+
+  // Remove frame-busting
+  modified = modified.replace(/<script[^>]*>[\s\S]*?(top\.location|parent\.location|window\.top|top\s*!==?\s*self)[\s\S]*?<\/script>/gi, '');
+
+  // Remove CSP and X-Frame-Options meta tags
+  modified = modified.replace(/<meta[^>]*http-equiv=["']?(Content-Security-Policy|X-Frame-Options)["']?[^>]*>/gi, '');
 
   return modified;
 }
 
-function rewriteJavaScript(js, targetUrl) {
+function rewriteJavaScript(js, targetUrl, proxyBase) {
   let modified = js;
   
-  // Replace hardcoded domains with current domain
-  const domain = targetUrl.hostname;
-  modified = modified.replace(/location\.hostname\s*[!=]==?\s*["'][^"']+["']/g, `location.hostname === "${domain}"`);
+  // Add proxy base as a constant
+  modified = `const __PROXY_BASE__ = '${proxyBase}';\n` + modified;
   
-  // Block frame-busting in JS files
+  // Block frame-busting
   modified = modified.replace(/top\.location\s*=\s*/g, '/* blocked */ void ');
   modified = modified.replace(/parent\.location\s*=\s*/g, '/* blocked */ void ');
+  modified = modified.replace(/if\s*\(\s*top\s*!==?\s*self\s*\)/g, 'if(false)');
   
   return modified;
 }
 
-function rewriteCSS(css, targetUrl) {
+function rewriteCSS(css, targetUrl, proxyBase) {
   let modified = css;
   
-  // Rewrite relative URLs in CSS
-  modified = modified.replace(/url\(["']?(?!http|\/\/|data:)([^"')]+)["']?\)/gi, (match, url) => {
+  const proxyUrl = (url) => {
     try {
-      const absoluteUrl = new URL(url, targetUrl.href).href;
-      return `url("${absoluteUrl}")`;
+      if (url.startsWith('data:')) return url;
+      if (url.startsWith('//')) url = targetUrl.protocol + url;
+      if (!url.startsWith('http')) url = new URL(url, targetUrl.href).href;
+      return proxyBase + encodeURIComponent(url);
     } catch {
-      return match;
+      return url;
     }
-  });
+  };
+  
+  // Rewrite all url() in CSS
+  modified = modified.replace(/url\(["']?(?!data:)([^"')]+)["']?\)/gi,
+    (match, url) => `url("${proxyUrl(url.trim())}")`);
   
   return modified;
 }
