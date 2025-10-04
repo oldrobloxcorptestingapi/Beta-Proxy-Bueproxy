@@ -616,6 +616,14 @@
                 loadPage(currentUrl);
             }
         });
+
+        // Listen for navigation messages from iframe
+        window.addEventListener('message', function(e) {
+            if (e.data && e.data.type === 'navigate' && e.data.url) {
+                console.log('📍 Intercepted navigation to:', e.data.url);
+                loadPage(e.data.url);
+            }
+        });
     </script>
 </body>
 </html>
