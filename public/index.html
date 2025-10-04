@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Web Proxy Viewer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .header {
+            background: rgba(255, 255, 255, 0.95);
+            padding: 20px;
+            box-shadow: 0 2px 15px rgba(0,0,0,0.1);
+            backdrop-filter: blur(10px);
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            width: 100%;
+        }
+
+        h1 {
+            color: #667eea;
+            margin-bottom: 15px;
+            font-size: 32px;
+            font-weight: 700;
+        }
+
+        .warning {
+            background: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 6px;
+            font-size: 14px;
+            color: #856404;
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+        }
+
+        .url-input {
+            flex: 1;
+            min-width: 300px;
+            padding: 14px 18px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            font-size: 16px;
+            transition: all 0.3s;
+            background: white;
+        }
+
+        .url-input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .btn {
+            padding: 14px 32px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            font-weight: 600;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn:active {
+            transform: translateY(0);
+        }
+
+        .btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .info {
+            background: rgba(255, 255, 255, 0.9);
+            padding: 12px 18px;
+            border-radius: 8px;
+            font-size: 14px;
+            color: #666;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .content-area {
+            flex: 1;
+            background: white;
+            margin: 20px;
+            border-radius: 16px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 80px 20px;
+            color: #667eea;
+        }
+
+        .loading.active {
+            display: block;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 60px;
+            height: 60px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .iframe-container {
+            flex: 1;
+            display: none;
+            position: relative;
+            min-height: 600px;
+        }
+
+        .iframe-container.active {
+            display: block;
+        }
+
+        iframe {
+            width: 100%;
+            height: 100%;
+            border: none;
+        }
+
+        .error {
+            display: none;
+            padding: 60px 40px;
+            text-align: center;
+            color: #d32f2f;
+        }
+
+        .error.active {
+            display: block;
+        }
+
+        .error-icon {
+            font-size: 64px;
+            margin-bottom: 20px;
+        }
+
+        .placeholder {
+            padding: 80px 20px;
+            text-align: center;
+            color: #999;
+        }
+
+        .placeholder-icon {
+            font-size: 80px;
+            margin-bottom: 20px;
+            opacity: 0.6;
+        }
+
+        .placeholder h2 {
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="container">
+            <h1>🌐 Web Proxy Viewer</h1>
+            <div class="warning">
+                ⚠️ <strong>Educational Tool:</strong> This proxy is for testing and educational purposes only. Respect website terms of service and use responsibly.
+            </div>
+            <div class="controls">
+                <input 
+                    type="text" 
+                    class="url-input" 
+                    id="urlInput" 
+                    placeholder="Enter URL (e.g., https://example.com)"
+                    value="https://example.com"
+                >
+                <button class="btn" id="loadBtn">Load Page</button>
+            </div>
+            <div class="info">
+                <span>💡</span>
+                <strong>Powered by Vercel Serverless Functions</strong> - Fast and reliable proxy routing
+            </div>
+        </div>
+    </div>
+
+    <div class="content-area">
+        <div class="placeholder" id="placeholder">
+            <div class="placeholder-icon">🚀</div>
+            <h2>Enter a URL to get started</h2>
+            <p>Your serverless proxy is ready to fetch and display any website.</p>
+        </div>
+
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <h3>Loading page through proxy...</h3>
+        </div>
+
+        <div class="error" id="error">
+            <div class="error-icon">❌</div>
+            <h2>Failed to Load Page</h2>
+            <p id="errorMsg"></p>
+        </div>
+
+        <div class="iframe-container" id="iframeContainer">
+            <iframe id="proxyFrame" sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>
+        </div>
+    </div>
+
+    <script>
+        const urlInput = document.getElementById('urlInput');
+        const loadBtn = document.getElementById('loadBtn');
+        const loading = document.getElementById('loading');
+        const error = document.getElementById('error');
+        const errorMsg = document.getElementById('errorMsg');
+        const iframeContainer = document.getElementById('iframeContainer');
+        const proxyFrame = document.getElementById('proxyFrame');
+        const placeholder = document.getElementById('placeholder');
+
+        function isValidUrl(string) {
+            try {
+                new URL(string);
+                return true;
+            } catch (_) {
+                return false;
+            }
+        }
+
+        function showLoading() {
+            placeholder.style.display = 'none';
+            loading.classList.add('active');
+            error.classList.remove('active');
+            iframeContainer.classList.remove('active');
+        }
+
+        function showError(message) {
+            loading.classList.remove('active');
+            error.classList.add('active');
+            errorMsg.textContent = message;
+            iframeContainer.classList.remove('active');
+        }
+
+        function showContent() {
+            loading.classList.remove('active');
+            error.classList.remove('active');
+            iframeContainer.classList.add('active');
+        }
+
+        async function loadPage(url) {
+            if (!isValidUrl(url)) {
+                showError('Please enter a valid URL (must include http:// or https://)');
+                return;
+            }
+
+            showLoading();
+            loadBtn.disabled = true;
+
+            try {
+                const response = await fetch(`/api/proxy?url=${encodeURIComponent(url)}`);
+                
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+                }
+
+                const html = await response.text();
+                
+                // Create a blob URL to display the content
+                const blob = new Blob([html], { type: 'text/html' });
+                const blobUrl = URL.createObjectURL(blob);
+                
+                proxyFrame.src = blobUrl;
+                
+                // Show content after iframe loads
+                proxyFrame.onload = () => {
+                    showContent();
+                    loadBtn.disabled = false;
+                };
+
+            } catch (err) {
+                console.error('Proxy error:', err);
+                showError(`Unable to load page: ${err.message}`);
+                loadBtn.disabled = false;
+            }
+        }
+
+        loadBtn.addEventListener('click', () => {
+            const url = urlInput.value.trim();
+            loadPage(url);
+        });
+
+        urlInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                const url = urlInput.value.trim();
+                loadPage(url);
+            }
+        });
+    </script>
+</body>
+</html>
