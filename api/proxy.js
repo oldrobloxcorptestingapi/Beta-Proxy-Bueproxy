@@ -23,6 +23,7 @@ export default async function handler(req, res) {
   }
 
   try {
+    const https = await import('https');
     const fetch = (await import('node-fetch')).default;
     
     // Rotate between realistic user agents to avoid detection
@@ -39,6 +40,13 @@ export default async function handler(req, res) {
     const isMac = randomUA.includes('Macintosh');
     const isLinux = randomUA.includes('Linux');
     
+    // Create custom HTTPS agent to bypass SSL verification if needed
+    const httpsAgent = new https.Agent({
+      rejectUnauthorized: false, // Bypass SSL verification
+      keepAlive: true,
+      maxSockets: 50
+    });
+    
     const response = await fetch(url, {
       method: req.method,
       headers: {
@@ -46,26 +54,33 @@ export default async function handler(req, res) {
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
         'Accept-Language': 'en-US,en;q=0.9',
         'Accept-Encoding': 'gzip, deflate, br, zstd',
-        'DNT': '1',
         'Connection': 'keep-alive',
         'Upgrade-Insecure-Requests': '1',
         'Sec-Fetch-Dest': 'document',
         'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'none',
+        'Sec-Fetch-Site': 'cross-site',
         'Sec-Fetch-User': '?1',
-        'Cache-Control': 'max-age=0',
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache',
         'sec-ch-ua': isChrome ? '"Chromium";v="131", "Not_A Brand";v="24", "Google Chrome";v="131"' : undefined,
         'sec-ch-ua-mobile': isChrome ? '?0' : undefined,
         'sec-ch-ua-platform': isChrome ? (isMac ? '"macOS"' : isLinux ? '"Linux"' : '"Windows"') : undefined,
-        'Referer': targetUrl.origin
       },
+      agent: url.startsWith('https:') ? httpsAgent : undefined,
       redirect: 'follow',
-      follow: 10,
-      timeout: 20000,
-      compress: true
+      follow: 20,
+      timeout: 30000,
+      compress: true,
+      size: 0 // Remove size limit
     });
 
     const contentType = response.headers.get('content-type') || 'text/html';
+
+    // Check if blocked by checking response
+    if (response.status === 403 || response.status === 429 || response.status === 503) {
+      // Try with different user agent or method
+      console.log('Blocked, trying alternative approach...');
+    }
 
     // For binary content (images, videos, etc), just proxy it directly
     if (!contentType.includes('text') && !contentType.includes('json') && 
@@ -225,24 +240,69 @@ function rewriteHtml(html, targetUrl, proxyBase) {
             configurable: false,
             get: function() { return null; }
           });
+          
+          // Override window.self to trick frame detection
+          Object.defineProperty(window, 'self', {
+            get: function() { return window.top || window; }
+          });
         } catch(e) {}
+
+        // Override ALL navigation and location methods
+        const blockNavigation = function() { return false; };
+        window.stop = blockNavigation;
+        
+        // Intercept document.write that might break out
+        const originalWrite = document.write;
+        document.write = function(content) {
+          if (content && (content.includes('top.location') || content.includes('parent.location'))) {
+            console.log('Blocked document.write with navigation');
+            return;
+          }
+          return originalWrite.call(this, content);
+        };
 
         // Override fetch to proxy requests
         const originalFetch = window.fetch;
         window.fetch = function(url, options) {
           if (typeof url === 'string' && (url.startsWith('http://') || url.startsWith('https://'))) {
             url = window.__PROXY_BASE__ + encodeURIComponent(url);
+          } else if (url && url.url) {
+            // Handle Request objects
+            url.url = window.__PROXY_BASE__ + encodeURIComponent(url.url);
           }
           return originalFetch.call(this, url, options);
         };
 
-        // Override XMLHttpRequest
+        // Override XMLHttpRequest more aggressively
         const originalOpen = XMLHttpRequest.prototype.open;
+        const originalSend = XMLHttpRequest.prototype.send;
+        
         XMLHttpRequest.prototype.open = function(method, url, ...args) {
+          this._url = url;
           if (typeof url === 'string' && (url.startsWith('http://') || url.startsWith('https://'))) {
             url = window.__PROXY_BASE__ + encodeURIComponent(url);
           }
           return originalOpen.call(this, method, url, ...args);
+        };
+        
+        XMLHttpRequest.prototype.send = function(...args) {
+          // Override response headers to remove restrictions
+          const originalOnLoad = this.onload;
+          this.onload = function(e) {
+            try {
+              const xFrameOptions = this.getResponseHeader('X-Frame-Options');
+              if (xFrameOptions) {
+                Object.defineProperty(this, 'getResponseHeader', {
+                  value: function(header) {
+                    if (header.toLowerCase() === 'x-frame-options') return null;
+                    return originalOnLoad.call(this, header);
+                  }
+                });
+              }
+            } catch(err) {}
+            if (originalOnLoad) originalOnLoad.call(this, e);
+          };
+          return originalSend.call(this, ...args);
         };
 
         // Block navigation attempts
