@@ -1,473 +1,129 @@
+// pages/api/proxy.js (Vercel / Node)
+import https from 'https';
+import http from 'http';
+import fetch from 'node-fetch';
+
 export default async function handler(req, res) {
-  // Enable CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', '*');
   res.setHeader('Access-Control-Expose-Headers', '*');
-
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
+  if (req.method === 'OPTIONS') return res.status(200).end();
 
   const { url } = req.query;
+  if (!url) return res.status(400).json({ error: 'Missing ?url=' });
 
-  if (!url) {
-    return res.status(400).json({ error: 'URL parameter is required' });
+  let target;
+  try {
+    target = new URL(url);
+  } catch {
+    return res.status(400).json({ error: 'Invalid URL' });
   }
 
-  let targetUrl;
-  try {
-    targetUrl = new URL(url);
-  } catch (e) {
-    return res.status(400).json({ error: 'Invalid URL provided' });
-  }
+  const userAgents = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17 Safari/605.1.15',
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131 Safari/537.36',
+  ];
+  const randomUA = userAgents[Math.floor(Math.random() * userAgents.length)];
+
+  const agent =
+    target.protocol === 'https:'
+      ? new https.Agent({ rejectUnauthorized: false, keepAlive: true })
+      : new http.Agent({ keepAlive: true });
 
   try {
-    const https = await import('https');
-    const fetch = (await import('node-fetch')).default;
-    
-    // Rotate between realistic user agents to avoid detection
-    const userAgents = [
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0',
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-      'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15'
-    ];
-    
-    const randomUA = userAgents[Math.floor(Math.random() * userAgents.length)];
-    const isChrome = randomUA.includes('Chrome');
-    const isMac = randomUA.includes('Macintosh');
-    const isLinux = randomUA.includes('Linux');
-    
-    // Create custom HTTPS agent to bypass SSL verification if needed
-    const httpsAgent = new https.Agent({
-      rejectUnauthorized: false, // Bypass SSL verification
-      keepAlive: true,
-      maxSockets: 50
-    });
-    
-    const response = await fetch(url, {
+    const response = await fetch(target.href, {
       method: req.method,
       headers: {
         'User-Agent': randomUA,
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+        'Accept': req.headers['accept'] || '*/*',
         'Accept-Language': 'en-US,en;q=0.9',
-        'Accept-Encoding': 'gzip, deflate, br, zstd',
-        'Connection': 'keep-alive',
-        'Upgrade-Insecure-Requests': '1',
-        'Sec-Fetch-Dest': 'document',
-        'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'cross-site',
-        'Sec-Fetch-User': '?1',
+        'Referer': target.origin + '/',
+        'Origin': target.origin,
         'Cache-Control': 'no-cache',
         'Pragma': 'no-cache',
-        'sec-ch-ua': isChrome ? '"Chromium";v="131", "Not_A Brand";v="24", "Google Chrome";v="131"' : undefined,
-        'sec-ch-ua-mobile': isChrome ? '?0' : undefined,
-        'sec-ch-ua-platform': isChrome ? (isMac ? '"macOS"' : isLinux ? '"Linux"' : '"Windows"') : undefined,
+        'Connection': 'keep-alive',
       },
-      agent: url.startsWith('https:') ? httpsAgent : undefined,
+      body: req.method !== 'GET' && req.method !== 'HEAD' ? req.body : undefined,
       redirect: 'follow',
       follow: 20,
       timeout: 30000,
       compress: true,
-      size: 0 // Remove size limit
+      agent,
     });
 
     const contentType = response.headers.get('content-type') || 'text/html';
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('X-Frame-Options', 'ALLOWALL');
+    res.removeHeader?.('Content-Security-Policy');
 
-    // Check if blocked by checking response
-    if (response.status === 403 || response.status === 429 || response.status === 503) {
-      // Try with different user agent or method
-      console.log('Blocked, trying alternative approach...');
-    }
-
-    // For binary content (images, videos, etc), just proxy it directly
-    if (!contentType.includes('text') && !contentType.includes('json') && 
-        !contentType.includes('javascript') && !contentType.includes('xml')) {
-      const buffer = await response.buffer();
-      res.setHeader('Content-Type', contentType);
-      res.setHeader('Cache-Control', 'public, max-age=31536000');
-      return res.status(response.status).send(buffer);
+    // If not text-based, just stream it directly
+    if (!contentType.includes('text') && !contentType.includes('json')) {
+      const buf = await response.arrayBuffer();
+      return res.status(response.status).send(Buffer.from(buf));
     }
 
     let body = await response.text();
 
-    // Get the proxy base URL
-    const proxyBase = '/api/proxy?url=';
-
-    // Aggressive content rewriting based on type
-    if (contentType.includes('text/html') || contentType.includes('application/xhtml')) {
-      body = rewriteHtml(body, targetUrl, proxyBase);
-    } else if (contentType.includes('javascript') || contentType.includes('json')) {
-      body = rewriteJavaScript(body, targetUrl, proxyBase);
-    } else if (contentType.includes('css')) {
-      body = rewriteCSS(body, targetUrl, proxyBase);
+    // Inject base and CSP fixes for HTML
+    if (contentType.includes('html')) {
+      body = rewriteHtml(body, target);
     }
 
-    // Remove ALL restrictive headers
-    res.setHeader('Content-Type', contentType);
-    res.removeHeader('X-Frame-Options');
-    res.removeHeader('Content-Security-Policy');
-    res.removeHeader('X-Content-Type-Options');
-    
-    // Force allow everything
-    res.setHeader('X-Frame-Options', 'ALLOWALL');
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    
-    res.status(response.status).send(body);
+    // Rewrite CSS or JS to route assets through proxy
+    if (contentType.includes('css')) {
+      body = rewriteCSS(body, target);
+    } else if (contentType.includes('javascript')) {
+      body = rewriteJavaScript(body, target);
+    }
 
-  } catch (error) {
-    console.error('Proxy error:', error);
-    
-    const errorHtml = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <title>Proxy Error</title>
-        <style>
-          body {
-            font-family: Arial, sans-serif;
-            background: #1a1a1a;
-            color: #e0e0e0;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            height: 100vh;
-            margin: 0;
-          }
-          .error-box {
-            background: #2d2d2d;
-            padding: 40px;
-            border-radius: 12px;
-            max-width: 600px;
-            text-align: center;
-          }
-          h1 { color: #ff6b6b; margin-bottom: 20px; }
-          p { margin: 10px 0; line-height: 1.6; }
-          .retry { 
-            margin-top: 20px; 
-            padding: 12px 24px;
-            background: #4a9eff;
-            color: white;
-            border: none;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 16px;
-          }
-          .details {
-            background: #1a1a1a;
-            padding: 15px;
-            border-radius: 6px;
-            margin-top: 20px;
-            font-family: monospace;
-            font-size: 12px;
-            text-align: left;
-            overflow-x: auto;
-          }
-        </style>
-      </head>
-      <body>
-        <div class="error-box">
-          <h1>⚠️ Connection Failed</h1>
-          <p>Unable to fetch: <strong>${url}</strong></p>
-          <p>${error.message}</p>
-          <div class="details">
-            <strong>Possible reasons:</strong><br>
-            • Site has strict anti-bot protection<br>
-            • SSL/Certificate issues<br>
-            • Site is blocking server requests<br>
-            • Timeout or network error<br>
-            • Site requires authentication
-          </div>
-          <button class="retry" onclick="window.parent.location.reload()">Retry</button>
-        </div>
-      </body>
-      </html>
-    `;
-    
-    res.setHeader('Content-Type', 'text/html');
-    res.status(200).send(errorHtml);
+    return res.status(response.status).send(body);
+  } catch (err) {
+    console.error('Proxy error:', err);
+    return res.status(500).send(`<h1>Proxy Error</h1><pre>${err.message}</pre>`);
   }
 }
 
-function rewriteHtml(html, targetUrl, proxyBase) {
-  const baseUrl = targetUrl.origin;
-  const fullUrl = targetUrl.href;
-  let modified = html;
+function rewriteHtml(html, target) {
+  const base = `/api/proxy?url=`;
+  const baseTag = `<base href="${target.href}"><meta http-equiv="Content-Security-Policy" content="default-src * 'unsafe-inline' 'unsafe-eval' data: blob:;">`;
 
-  // Function to proxy a URL
-  const proxyUrl = (url) => {
+  let out = html.replace(/<head[^>]*>/i, `<head>${baseTag}`);
+
+  const proxy = (u) => {
     try {
-      if (url.startsWith('data:') || url.startsWith('blob:') || url.startsWith('javascript:')) {
-        return url;
-      }
-      if (url.startsWith('//')) {
-        url = targetUrl.protocol + url;
-      }
-      if (!url.startsWith('http')) {
-        url = new URL(url, fullUrl).href;
-      }
-      return proxyBase + encodeURIComponent(url);
+      if (!u || u.startsWith('data:') || u.startsWith('javascript:')) return u;
+      if (u.startsWith('//')) u = target.protocol + u;
+      if (!/^https?:/i.test(u)) u = new URL(u, target.href).href;
+      return base + encodeURIComponent(u);
     } catch {
-      return url;
+      return u;
     }
   };
 
-  // Inject aggressive anti-framing and URL rewriting
-  const aggressiveHead = `
-    <base href="${fullUrl}">
-    <meta http-equiv="Content-Security-Policy" content="default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; frame-ancestors *;">
-    <script>
-      // Proxy configuration
-      window.__PROXY_BASE__ = '${proxyBase}';
-      window.__ORIGINAL_URL__ = '${fullUrl}';
-      
-      // Ultra aggressive frame-busting prevention
-      (function() {
-        'use strict';
-        
-        try {
-          Object.defineProperty(window, 'top', {
-            configurable: false,
-            get: function() { return window; }
-          });
-          Object.defineProperty(window, 'parent', {
-            configurable: false,
-            get: function() { return window; }
-          });
-          Object.defineProperty(window, 'frameElement', {
-            configurable: false,
-            get: function() { return null; }
-          });
-          
-          // Override window.self to trick frame detection
-          Object.defineProperty(window, 'self', {
-            get: function() { return window.top || window; }
-          });
-        } catch(e) {}
+  // Rewrite href/src/srcset
+  out = out.replace(/(href|src|srcset)=["']([^"']+)["']/gi, (m, attr, val) => `${attr}="${proxy(val)}"`);
+  out = out.replace(/url\(["']?(?!data:)([^"')]+)["']?\)/gi, (m, u) => `url("${proxy(u)}")`);
 
-        // Override ALL navigation and location methods
-        const blockNavigation = function() { return false; };
-        window.stop = blockNavigation;
-        
-        // Intercept document.write that might break out
-        const originalWrite = document.write;
-        document.write = function(content) {
-          if (content && (content.includes('top.location') || content.includes('parent.location'))) {
-            console.log('Blocked document.write with navigation');
-            return;
-          }
-          return originalWrite.call(this, content);
-        };
-
-        // Override fetch to proxy requests
-        const originalFetch = window.fetch;
-        window.fetch = function(url, options) {
-          if (typeof url === 'string' && (url.startsWith('http://') || url.startsWith('https://'))) {
-            url = window.__PROXY_BASE__ + encodeURIComponent(url);
-          } else if (url && url.url) {
-            // Handle Request objects
-            url.url = window.__PROXY_BASE__ + encodeURIComponent(url.url);
-          }
-          return originalFetch.call(this, url, options);
-        };
-
-        // Override XMLHttpRequest more aggressively
-        const originalOpen = XMLHttpRequest.prototype.open;
-        const originalSend = XMLHttpRequest.prototype.send;
-        
-        XMLHttpRequest.prototype.open = function(method, url, ...args) {
-          this._url = url;
-          if (typeof url === 'string' && (url.startsWith('http://') || url.startsWith('https://'))) {
-            url = window.__PROXY_BASE__ + encodeURIComponent(url);
-          }
-          return originalOpen.call(this, method, url, ...args);
-        };
-        
-        XMLHttpRequest.prototype.send = function(...args) {
-          // Override response headers to remove restrictions
-          const originalOnLoad = this.onload;
-          this.onload = function(e) {
-            try {
-              const xFrameOptions = this.getResponseHeader('X-Frame-Options');
-              if (xFrameOptions) {
-                Object.defineProperty(this, 'getResponseHeader', {
-                  value: function(header) {
-                    if (header.toLowerCase() === 'x-frame-options') return null;
-                    return originalOnLoad.call(this, header);
-                  }
-                });
-              }
-            } catch(err) {}
-            if (originalOnLoad) originalOnLoad.call(this, e);
-          };
-          return originalSend.call(this, ...args);
-        };
-
-        // Block navigation attempts
-        window.addEventListener('beforeunload', function(e) {
-          e.stopImmediatePropagation();
-        }, true);
-
-        console.log('🛡️ Proxy frame protection active');
-      })();
-    </script>
-    <script>
-      // Intercept ALL navigation
-      (function() {
-        const proxyNavigate = (url) => {
-          if (!url) return;
-          if (url.startsWith('#') || url.startsWith('javascript:') || url.startsWith('mailto:') || url.startsWith('tel:')) return;
-          
-          try {
-            if (!url.startsWith('http://') && !url.startsWith('https://')) {
-              url = new URL(url, window.__ORIGINAL_URL__).href;
-            }
-            
-            window.parent.postMessage({
-              type: 'navigate',
-              url: url
-            }, '*');
-          } catch(e) {
-            console.error('Navigation error:', e);
-          }
-        };
-
-        // Intercept History API
-        const originalPushState = history.pushState;
-        const originalReplaceState = history.replaceState;
-        
-        history.pushState = function(state, title, url) {
-          if (url) proxyNavigate(url);
-          return originalPushState.apply(this, arguments);
-        };
-        
-        history.replaceState = function(state, title, url) {
-          if (url) proxyNavigate(url);
-          return originalReplaceState.apply(this, arguments);
-        };
-
-        // Intercept all clicks
-        document.addEventListener('click', function(e) {
-          const link = e.target.closest('a');
-          if (link && link.href) {
-            e.preventDefault();
-            e.stopPropagation();
-            e.stopImmediatePropagation();
-            proxyNavigate(link.href);
-            return false;
-          }
-        }, true);
-
-        // Intercept form submissions
-        document.addEventListener('submit', function(e) {
-          const form = e.target;
-          if (form && form.action) {
-            e.preventDefault();
-            e.stopPropagation();
-            e.stopImmediatePropagation();
-            
-            const formData = new FormData(form);
-            const params = new URLSearchParams(formData).toString();
-            let url = form.action;
-            
-            if (form.method.toUpperCase() === 'GET' && params) {
-              url += (url.includes('?') ? '&' : '?') + params;
-            }
-            
-            proxyNavigate(url);
-            return false;
-          }
-        }, true);
-
-        console.log('🔗 Navigation interception active');
-      })();
-    </script>
-  `;
-
-  modified = modified.replace(/<head[^>]*>/i, '<head>' + aggressiveHead);
-
-  // Rewrite ALL URLs in HTML to go through proxy
-  // Script sources
-  modified = modified.replace(/(<script[^>]*\ssrc=["'])(?!http:\/\/|https:\/\/|\/\/|data:|blob:)([^"']+)(["'])/gi, 
-    (match, before, url, after) => before + proxyUrl(url) + after);
-  
-  modified = modified.replace(/(<script[^>]*\ssrc=["'])((?:https?:)?\/\/[^"']+)(["'])/gi,
-    (match, before, url, after) => before + proxyUrl(url) + after);
-
-  // Link/CSS sources
-  modified = modified.replace(/(<link[^>]*\shref=["'])(?!http:\/\/|https:\/\/|\/\/|#|data:)([^"']+)(["'])/gi,
-    (match, before, url, after) => before + proxyUrl(url) + after);
-  
-  modified = modified.replace(/(<link[^>]*\shref=["'])((?:https?:)?\/\/[^"']+)(["'])/gi,
-    (match, before, url, after) => before + proxyUrl(url) + after);
-
-  // Image sources
-  modified = modified.replace(/(<img[^>]*\ssrc=["'])(?!http:\/\/|https:\/\/|\/\/|data:|blob:)([^"']+)(["'])/gi,
-    (match, before, url, after) => before + proxyUrl(url) + after);
-  
-  modified = modified.replace(/(<img[^>]*\ssrc=["'])((?:https?:)?\/\/[^"']+)(["'])/gi,
-    (match, before, url, after) => before + proxyUrl(url) + after);
-
-  // Iframe sources
-  modified = modified.replace(/(<iframe[^>]*\ssrc=["'])(?!http:\/\/|https:\/\/|\/\/|about:|data:)([^"']+)(["'])/gi,
-    (match, before, url, after) => before + proxyUrl(url) + after);
-  
-  modified = modified.replace(/(<iframe[^>]*\ssrc=["'])((?:https?:)?\/\/[^"']+)(["'])/gi,
-    (match, before, url, after) => before + proxyUrl(url) + after);
-
-  // All other src attributes
-  modified = modified.replace(/(\ssrc=["'])(?!http:\/\/|https:\/\/|\/\/|data:|blob:|javascript:)([^"']+)(["'])/gi,
-    (match, before, url, after) => before + proxyUrl(url) + after);
-  
-  modified = modified.replace(/(\ssrc=["'])((?:https?:)?\/\/[^"']+)(["'])/gi,
-    (match, before, url, after) => before + proxyUrl(url) + after);
-
-  // Background images in style attributes
-  modified = modified.replace(/url\(["']?(?!http:\/\/|https:\/\/|\/\/|data:)([^"')]+)["']?\)/gi,
-    (match, url) => `url("${proxyUrl(url)}")`);
-
-  // Remove frame-busting
-  modified = modified.replace(/<script[^>]*>[\s\S]*?(top\.location|parent\.location|window\.top|top\s*!==?\s*self)[\s\S]*?<\/script>/gi, '');
-
-  // Remove CSP and X-Frame-Options meta tags
-  modified = modified.replace(/<meta[^>]*http-equiv=["']?(Content-Security-Policy|X-Frame-Options)["']?[^>]*>/gi, '');
-
-  return modified;
+  return out;
 }
 
-function rewriteJavaScript(js, targetUrl, proxyBase) {
-  let modified = js;
-  
-  // Add proxy base as a constant
-  modified = `const __PROXY_BASE__ = '${proxyBase}';\n` + modified;
-  
-  // Block frame-busting
-  modified = modified.replace(/top\.location\s*=\s*/g, '/* blocked */ void ');
-  modified = modified.replace(/parent\.location\s*=\s*/g, '/* blocked */ void ');
-  modified = modified.replace(/if\s*\(\s*top\s*!==?\s*self\s*\)/g, 'if(false)');
-  
-  return modified;
+function rewriteJavaScript(js, target) {
+  const base = `/api/proxy?url=`;
+  return `const __PROXY__="${base}";\n` + js.replace(/top\.location/g, '/*blocked*/null');
 }
 
-function rewriteCSS(css, targetUrl, proxyBase) {
-  let modified = css;
-  
-  const proxyUrl = (url) => {
+function rewriteCSS(css, target) {
+  const base = `/api/proxy?url=`;
+  return css.replace(/url\(["']?(?!data:)([^"')]+)["']?\)/gi, (m, u) => {
     try {
-      if (url.startsWith('data:')) return url;
-      if (url.startsWith('//')) url = targetUrl.protocol + url;
-      if (!url.startsWith('http')) url = new URL(url, targetUrl.href).href;
-      return proxyBase + encodeURIComponent(url);
+      if (u.startsWith('//')) u = target.protocol + u;
+      if (!/^https?:/i.test(u)) u = new URL(u, target.href).href;
+      return `url("${base + encodeURIComponent(u)}")`;
     } catch {
-      return url;
+      return m;
     }
-  };
-  
-  // Rewrite all url() in CSS
-  modified = modified.replace(/url\(["']?(?!data:)([^"')]+)["']?\)/gi,
-    (match, url) => `url("${proxyUrl(url.trim())}")`);
-  
-  return modified;
+  });
 }
