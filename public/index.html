@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Web Proxy Viewer</title>
+    <title>Web Proxy Browser</title>
     <style>
         * {
             margin: 0;
@@ -12,168 +12,237 @@
         }
 
         body {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #1a1a1a;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .browser-chrome {
+            background: #2d2d2d;
+            border-bottom: 1px solid #1a1a1a;
             display: flex;
             flex-direction: column;
         }
 
-        .header {
-            background: rgba(255, 255, 255, 0.95);
-            padding: 20px;
-            box-shadow: 0 2px 15px rgba(0,0,0,0.1);
-            backdrop-filter: blur(10px);
-        }
-
-        .container {
-            max-width: 1400px;
-            margin: 0 auto;
-            width: 100%;
-        }
-
-        h1 {
-            color: #667eea;
-            margin-bottom: 15px;
-            font-size: 32px;
-            font-weight: 700;
-        }
-
-        .warning {
-            background: #fff3cd;
-            border-left: 4px solid #ffc107;
-            padding: 15px;
-            margin-bottom: 20px;
-            border-radius: 6px;
-            font-size: 14px;
-            color: #856404;
-        }
-
-        .controls {
-            display: flex;
-            gap: 10px;
-            margin-bottom: 15px;
-            flex-wrap: wrap;
-        }
-
-        .url-input {
-            flex: 1;
-            min-width: 300px;
-            padding: 14px 18px;
-            border: 2px solid #e0e0e0;
-            border-radius: 10px;
-            font-size: 16px;
-            transition: all 0.3s;
-            background: white;
-        }
-
-        .url-input:focus {
-            outline: none;
-            border-color: #667eea;
-            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
-        }
-
-        .btn {
-            padding: 14px 32px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            border: none;
-            border-radius: 10px;
-            font-size: 16px;
-            cursor: pointer;
-            transition: transform 0.2s, box-shadow 0.2s;
-            font-weight: 600;
-        }
-
-        .btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
-        }
-
-        .btn:active {
-            transform: translateY(0);
-        }
-
-        .btn:disabled {
-            background: #ccc;
-            cursor: not-allowed;
-            transform: none;
-        }
-
-        .info {
-            background: rgba(255, 255, 255, 0.9);
-            padding: 12px 18px;
-            border-radius: 8px;
-            font-size: 14px;
-            color: #666;
+        .window-controls {
             display: flex;
             align-items: center;
+            padding: 10px 15px;
             gap: 8px;
         }
 
-        .content-area {
-            flex: 1;
-            background: white;
-            margin: 20px;
-            border-radius: 16px;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
-            overflow: hidden;
-            display: flex;
-            flex-direction: column;
-        }
-
-        .loading {
-            display: none;
-            text-align: center;
-            padding: 80px 20px;
-            color: #667eea;
-        }
-
-        .loading.active {
-            display: block;
-        }
-
-        .spinner {
-            border: 4px solid #f3f3f3;
-            border-top: 4px solid #667eea;
+        .control-dot {
+            width: 12px;
+            height: 12px;
             border-radius: 50%;
-            width: 60px;
-            height: 60px;
-            animation: spin 1s linear infinite;
-            margin: 0 auto 20px;
+            cursor: pointer;
         }
 
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
+        .control-dot.close { background: #ff5f56; }
+        .control-dot.minimize { background: #ffbd2e; }
+        .control-dot.maximize { background: #27c93f; }
+
+        .nav-bar {
+            display: flex;
+            align-items: center;
+            padding: 8px 15px;
+            gap: 10px;
         }
 
-        .iframe-container {
+        .nav-buttons {
+            display: flex;
+            gap: 8px;
+        }
+
+        .nav-btn {
+            width: 32px;
+            height: 32px;
+            border-radius: 6px;
+            background: #3a3a3a;
+            border: none;
+            color: #b0b0b0;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            transition: background 0.2s;
+        }
+
+        .nav-btn:hover {
+            background: #4a4a4a;
+        }
+
+        .nav-btn:disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+        }
+
+        .address-bar-container {
             flex: 1;
-            display: none;
-            position: relative;
-            min-height: 600px;
+            display: flex;
+            align-items: center;
+            background: #3a3a3a;
+            border-radius: 8px;
+            padding: 0 12px;
+            gap: 10px;
         }
 
-        .iframe-container.active {
-            display: block;
+        .lock-icon {
+            color: #4a9eff;
+            font-size: 16px;
+        }
+
+        .address-bar {
+            flex: 1;
+            background: transparent;
+            border: none;
+            color: #e0e0e0;
+            font-size: 14px;
+            padding: 10px 0;
+            outline: none;
+        }
+
+        .address-bar::placeholder {
+            color: #808080;
+        }
+
+        .menu-btn {
+            width: 32px;
+            height: 32px;
+            border-radius: 6px;
+            background: #3a3a3a;
+            border: none;
+            color: #b0b0b0;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            transition: background 0.2s;
+        }
+
+        .menu-btn:hover {
+            background: #4a4a4a;
+        }
+
+        .tab-bar {
+            display: flex;
+            align-items: flex-end;
+            padding: 0 10px;
+            background: #2d2d2d;
+            height: 36px;
+        }
+
+        .tab {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            background: #3a3a3a;
+            border-radius: 8px 8px 0 0;
+            color: #b0b0b0;
+            font-size: 13px;
+            max-width: 200px;
+            border: none;
+            cursor: pointer;
+        }
+
+        .tab.active {
+            background: #1a1a1a;
+            color: #e0e0e0;
+        }
+
+        .tab-icon {
+            font-size: 14px;
+        }
+
+        .tab-title {
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .viewport {
+            flex: 1;
+            background: #1a1a1a;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .loading-bar {
+            position: absolute;
+            top: 0;
+            left: 0;
+            height: 3px;
+            background: #4a9eff;
+            width: 0;
+            transition: width 0.3s;
+            z-index: 10;
+        }
+
+        .loading-bar.active {
+            animation: loading 2s ease-in-out infinite;
+        }
+
+        @keyframes loading {
+            0% { width: 0; }
+            50% { width: 70%; }
+            100% { width: 100%; opacity: 0; }
         }
 
         iframe {
             width: 100%;
             height: 100%;
             border: none;
+            background: white;
         }
 
-        .error {
-            display: none;
-            padding: 60px 40px;
+        .placeholder-screen {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: #808080;
             text-align: center;
-            color: #d32f2f;
+            padding: 40px;
         }
 
-        .error.active {
-            display: block;
+        .placeholder-icon {
+            font-size: 80px;
+            margin-bottom: 20px;
+            opacity: 0.5;
+        }
+
+        .placeholder-screen h2 {
+            color: #b0b0b0;
+            margin-bottom: 10px;
+            font-weight: 500;
+        }
+
+        .placeholder-screen p {
+            color: #808080;
+            font-size: 14px;
+        }
+
+        .error-screen {
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: #ff6b6b;
+            text-align: center;
+            padding: 40px;
+        }
+
+        .error-screen.active {
+            display: flex;
         }
 
         .error-icon {
@@ -181,80 +250,226 @@
             margin-bottom: 20px;
         }
 
-        .placeholder {
-            padding: 80px 20px;
-            text-align: center;
-            color: #999;
-        }
-
-        .placeholder-icon {
-            font-size: 80px;
-            margin-bottom: 20px;
-            opacity: 0.6;
-        }
-
-        .placeholder h2 {
-            color: #667eea;
+        .error-screen h2 {
+            color: #ff6b6b;
             margin-bottom: 10px;
+        }
+
+        .error-screen p {
+            color: #b0b0b0;
+            margin-bottom: 20px;
+        }
+
+        .retry-btn {
+            padding: 10px 24px;
+            background: #4a9eff;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        .retry-btn:hover {
+            background: #3a8eef;
+        }
+
+        .status-bar {
+            background: #2d2d2d;
+            border-top: 1px solid #1a1a1a;
+            padding: 6px 15px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 12px;
+            color: #808080;
+        }
+
+        .status-left {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #27c93f;
+        }
+
+        .status-dot.loading {
+            background: #ffbd2e;
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+
+        .iframe-wrapper {
+            display: none;
+            width: 100%;
+            height: 100%;
+        }
+
+        .iframe-wrapper.active {
+            display: block;
+        }
+
+        .warning-banner {
+            background: #3a2f00;
+            border-bottom: 1px solid #5a4f00;
+            padding: 8px 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 13px;
+            color: #ffd700;
+        }
+
+        .warning-icon {
+            font-size: 16px;
         }
     </style>
 </head>
 <body>
-    <div class="header">
-        <div class="container">
-            <h1>🌐 Web Proxy Viewer</h1>
-            <div class="warning">
-                ⚠️ <strong>Educational Tool:</strong> This proxy is for testing and educational purposes only. Respect website terms of service and use responsibly.
+    <div class="browser-chrome">
+        <div class="warning-banner">
+            <span class="warning-icon">⚠️</span>
+            <span><strong>Educational Tool:</strong> This proxy is for testing purposes only. Use responsibly.</span>
+        </div>
+
+        <div class="window-controls">
+            <div class="control-dot close"></div>
+            <div class="control-dot minimize"></div>
+            <div class="control-dot maximize"></div>
+        </div>
+
+        <div class="nav-bar">
+            <div class="nav-buttons">
+                <button class="nav-btn" id="backBtn" disabled title="Back">←</button>
+                <button class="nav-btn" id="forwardBtn" disabled title="Forward">→</button>
+                <button class="nav-btn" id="refreshBtn" title="Refresh">↻</button>
             </div>
-            <div class="controls">
+
+            <div class="address-bar-container">
+                <span class="lock-icon">🔒</span>
                 <input 
                     type="text" 
-                    class="url-input" 
-                    id="urlInput" 
-                    placeholder="Enter URL (e.g., https://example.com)"
+                    class="address-bar" 
+                    id="addressBar"
+                    placeholder="Enter URL or search..."
                     value="https://example.com"
                 >
-                <button class="btn" id="loadBtn">Load Page</button>
             </div>
-            <div class="info">
-                <span>💡</span>
-                <strong>Powered by Vercel Serverless Functions</strong> - Fast and reliable proxy routing
+
+            <button class="menu-btn" title="Menu">⋮</button>
+        </div>
+
+        <div class="tab-bar">
+            <div class="tab active">
+                <span class="tab-icon">🌐</span>
+                <span class="tab-title" id="tabTitle">New Tab</span>
             </div>
         </div>
     </div>
 
-    <div class="content-area">
-        <div class="placeholder" id="placeholder">
-            <div class="placeholder-icon">🚀</div>
-            <h2>Enter a URL to get started</h2>
-            <p>Your serverless proxy is ready to fetch and display any website.</p>
+    <div class="viewport">
+        <div class="loading-bar" id="loadingBar"></div>
+
+        <div class="placeholder-screen" id="placeholder">
+            <div class="placeholder-icon">🌐</div>
+            <h2>Welcome to Web Proxy Browser</h2>
+            <p>Enter a URL in the address bar to get started</p>
         </div>
 
-        <div class="loading" id="loading">
-            <div class="spinner"></div>
-            <h3>Loading page through proxy...</h3>
+        <div class="error-screen" id="errorScreen">
+            <div class="error-icon">⚠️</div>
+            <h2>Unable to Load Page</h2>
+            <p id="errorMessage">The page could not be loaded</p>
+            <button class="retry-btn" id="retryBtn">Try Again</button>
         </div>
 
-        <div class="error" id="error">
-            <div class="error-icon">❌</div>
-            <h2>Failed to Load Page</h2>
-            <p id="errorMsg"></p>
+        <div class="iframe-wrapper" id="iframeWrapper">
+            <iframe id="proxyFrame" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"></iframe>
         </div>
+    </div>
 
-        <div class="iframe-container" id="iframeContainer">
-            <iframe id="proxyFrame" sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>
+    <div class="status-bar">
+        <div class="status-left">
+            <div class="status-indicator">
+                <div class="status-dot" id="statusDot"></div>
+                <span id="statusText">Ready</span>
+            </div>
+        </div>
+        <div class="status-right">
+            <span>Powered by Vercel</span>
         </div>
     </div>
 
     <script>
-        const urlInput = document.getElementById('urlInput');
-        const loadBtn = document.getElementById('loadBtn');
-        const loading = document.getElementById('loading');
-        const error = document.getElementById('error');
-        const errorMsg = document.getElementById('errorMsg');
-        const iframeContainer = document.getElementById('iframeContainer');
-        const proxyFrame = document.getElementById('proxyFrame');
+        const addressBar = document.getElementById('addressBar');
+        const backBtn = document.getElementById('backBtn');
+        const forwardBtn = document.getElementById('forwardBtn');
+        const refreshBtn = document.getElementById('refreshBtn');
+        const loadingBar = document.getElementById('loadingBar');
         const placeholder = document.getElementById('placeholder');
+        const errorScreen = document.getElementById('errorScreen');
+        const errorMessage = document.getElementById('errorMessage');
+        const retryBtn = document.getElementById('retryBtn');
+        const iframeWrapper = document.getElementById('iframeWrapper');
+        const proxyFrame = document.getElementById('proxyFrame');
+        const tabTitle = document.getElementById('tabTitle');
+        const statusDot = document.getElementById('statusDot');
+        const statusText = document.getElementById('statusText');
+
+        let history = [];
+        let historyIndex = -1;
+        let currentUrl = '';
+
+        function updateNavButtons() {
+            backBtn.disabled = historyIndex <= 0;
+            forwardBtn.disabled = historyIndex >= history.length - 1;
+        }
+
+        function setStatus(status, text) {
+            statusDot.className = 'status-dot ' + status;
+            statusText.textContent = text;
+        }
+
+        function showLoading() {
+            placeholder.style.display = 'none';
+            errorScreen.classList.remove('active');
+            iframeWrapper.classList.remove('active');
+            loadingBar.classList.add('active');
+            setStatus('loading', 'Loading...');
+        }
+
+        function showError(message) {
+            placeholder.style.display = 'none';
+            errorScreen.classList.add('active');
+            iframeWrapper.classList.remove('active');
+            loadingBar.classList.remove('active');
+            errorMessage.textContent = message;
+            setStatus('', 'Error');
+        }
+
+        function showContent() {
+            placeholder.style.display = 'none';
+            errorScreen.classList.remove('active');
+            iframeWrapper.classList.add('active');
+            loadingBar.classList.remove('active');
+            setStatus('', 'Done');
+        }
 
         function isValidUrl(string) {
             try {
@@ -265,73 +480,140 @@
             }
         }
 
-        function showLoading() {
-            placeholder.style.display = 'none';
-            loading.classList.add('active');
-            error.classList.remove('active');
-            iframeContainer.classList.remove('active');
+        function normalizeUrl(input) {
+            input = input.trim();
+            
+            // If it already has a protocol, use it
+            if (input.startsWith('http://') || input.startsWith('https://')) {
+                return input;
+            }
+            
+            // If it looks like a domain, add https
+            if (input.includes('.') && !input.includes(' ')) {
+                return 'https://' + input;
+            }
+            
+            // Otherwise treat as search
+            return 'https://www.google.com/search?q=' + encodeURIComponent(input);
         }
 
-        function showError(message) {
-            loading.classList.remove('active');
-            error.classList.add('active');
-            errorMsg.textContent = message;
-            iframeContainer.classList.remove('active');
-        }
-
-        function showContent() {
-            loading.classList.remove('active');
-            error.classList.remove('active');
-            iframeContainer.classList.add('active');
+        function displayUrl(url) {
+            // Always show the full URL with protocol in the address bar
+            try {
+                const urlObj = new URL(url);
+                // Ensure it always shows with https:// if it doesn't have a protocol
+                if (!url.startsWith('http://') && !url.startsWith('https://')) {
+                    return 'https://' + url;
+                }
+                return url;
+            } catch (e) {
+                return url;
+            }
         }
 
         async function loadPage(url) {
+            url = normalizeUrl(url);
+            
             if (!isValidUrl(url)) {
-                showError('Please enter a valid URL (must include http:// or https://)');
+                showError('Invalid URL format');
                 return;
             }
 
             showLoading();
-            loadBtn.disabled = true;
+            currentUrl = url;
+            addressBar.value = displayUrl(url);
+
+            // Add to history
+            if (historyIndex < history.length - 1) {
+                history = history.slice(0, historyIndex + 1);
+            }
+            history.push(url);
+            historyIndex = history.length - 1;
+            updateNavButtons();
 
             try {
                 const response = await fetch(`/api/proxy?url=${encodeURIComponent(url)}`);
                 
                 if (!response.ok) {
-                    const errorData = await response.json();
-                    throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(errorData.error || `HTTP ${response.status}`);
                 }
 
                 const html = await response.text();
                 
-                // Create a blob URL to display the content
-                const blob = new Blob([html], { type: 'text/html' });
+                // Inject base tag to handle relative URLs
+                const modifiedHtml = html.replace(
+                    '<head>',
+                    `<head><base href="${url}">`
+                );
+                
+                const blob = new Blob([modifiedHtml], { type: 'text/html' });
                 const blobUrl = URL.createObjectURL(blob);
                 
                 proxyFrame.src = blobUrl;
                 
-                // Show content after iframe loads
                 proxyFrame.onload = () => {
                     showContent();
-                    loadBtn.disabled = false;
+                    
+                    // Try to get page title
+                    try {
+                        const iframeDoc = proxyFrame.contentDocument || proxyFrame.contentWindow.document;
+                        const title = iframeDoc.title || new URL(url).hostname;
+                        tabTitle.textContent = title;
+                    } catch (e) {
+                        tabTitle.textContent = new URL(url).hostname;
+                    }
                 };
+
+                // Fallback if onload doesn't fire
+                setTimeout(() => {
+                    if (iframeWrapper.classList.contains('active') === false) {
+                        showContent();
+                        tabTitle.textContent = new URL(url).hostname;
+                    }
+                }, 2000);
 
             } catch (err) {
                 console.error('Proxy error:', err);
-                showError(`Unable to load page: ${err.message}`);
-                loadBtn.disabled = false;
+                showError(err.message || 'Unable to load page');
             }
         }
 
-        loadBtn.addEventListener('click', () => {
-            const url = urlInput.value.trim();
-            loadPage(url);
+        // Address bar events
+        addressBar.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                loadPage(addressBar.value);
+            }
         });
 
-        urlInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') {
-                const url = urlInput.value.trim();
-                loadPage(url);
+        addressBar.addEventListener('focus', function() {
+            this.select();
+        });
+
+        // Navigation buttons
+        backBtn.addEventListener('click', () => {
+            if (historyIndex > 0) {
+                historyIndex--;
+                loadPage(history[historyIndex]);
+            }
+        });
+
+        forwardBtn.addEventListener('click', () => {
+            if (historyIndex < history.length - 1) {
+                historyIndex++;
+                loadPage(history[historyIndex]);
+            }
+        });
+
+        refreshBtn.addEventListener('click', () => {
+            if (currentUrl) {
+                loadPage(currentUrl);
+            }
+        });
+
+        retryBtn.addEventListener('click', () => {
+            if (currentUrl) {
+                loadPage(currentUrl);
             }
         });
     </script>
